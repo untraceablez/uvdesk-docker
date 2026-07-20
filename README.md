@@ -1,149 +1,92 @@
-![UV Desk Logo](https://camo.githubusercontent.com/d89169b78aa91f0bd1842160d0530b37ec5c767b27d7f1e3fbdcd636fb85ddd7/68747470733a2f2f73332d61702d736f757468656173742d312e616d617a6f6e6177732e636f6d2f63646e2e75766465736b2e636f6d2f75766465736b2f62756e646c65732f7765626b756c64656661756c742f696d616765732f75766465736b2d776964652e737667)
+# uvdesk-docker
 
-# uvdesk-unraid
+Automated, multi-architecture Docker image builds of
+[`uvdesk/community-skeleton`](https://github.com/uvdesk/community-skeleton), driven by Jenkins with a
+SonarQube quality gate.
 
-## Table of Contents
+This repository is a **packaging and automation layer only**. It monitors upstream UVdesk releases and,
+for each new eligible release, builds the **unmodified upstream release** into `linux/amd64` and
+`linux/arm64` images and publishes them to Docker Hub and GitHub Container Registry (GHCR) with
+`latest`, exact-version, and architecture-pinned tags.
 
- * [What is UVDesk?](#what-is-uvdesk)
- * [Self-Hosting](#self-hosting)
-    * [Docker Run / Docker Compose](#docker-run--docker-compose)
-    * [Non-Docker Setup](#non-docker-setup)
-    * [unRAID](#unraid)
-        * [unRAID Requirements](#unraid-requirements)
-        * [Reverse Proxy](#reverse-proxy)
-        * [Setting up the Database](#setting-up-the-database)
-            * [Logging into mySQL](#logging-in)
-            * [Creating the User](#creating-the-user)
-            * [Creating the Database](#creating-the-database)
-            * [Granting Privileges](#granting-user-privileges-on-database)
-        * [Install uvdesk from Community Applications](#installing-uvdesk-from-community-applications)
-    * [Accessing UVDesk &  First-Time Setup](#accessing-uvdesk--first-time-setup)
-* [Acknowledgements](#acknowledgements)
+> **It never modifies, patches, or forks upstream UVdesk code.** There is deliberately no `Dockerfile`
+> in this repo — builds run against the upstream release's own Dockerfile. See
+> [`.specify/memory/constitution.md`](.specify/memory/constitution.md), Principle I.
 
-
-## What is UVDesk?
-
-[**UVDesk**](https://www.uvdesk.com/en/) is a open source helpdesk software solution. It has support for a multitude of features including the following: 
-
-* A multi-customer & multi-agent ticket system.
-* A full mailer system to send mail to agents and customers.
-* A fully featured knowledge base for self-service.
-* CMS Platform Support
-* Plugin Support
-* Custom branding
-
-## Self-Hosting
-
-### Docker Run / Docker Compose
-
-This is a container template for hosting uvdesk on [unRAID](https://unraid.net/). If you are not using unRAID, there are better `docker-compose` and `docker-run` templates out there, such as the base for this unRAID image, [dietermartens/uvdesk](https://hub.docker.com/r/dietermartens/uvdesk/).
-
-### Non-Docker Setup
-
-If you're looking to install this on a non-containerized system, look to UVDesk's [Official Install Guide](https://github.com/uvdesk/community-skeleton#installation).
-
-
-### unRAID
-
-Alright, the main event and what this template is made for. If you're running unRAID you should be able to find this template underneath the **Productivity** or **Tools** sections in Community Applications, or by searching for `uvdesk`. 
-
-#### unRAID Requirements
-
-* You will need to have a **local** mySQL or MariaDB instance running on the same docker network as uvdesk. 
-    * You will need to create a `uvdesk` database and `uvdesk` user with full privileges on that database *prior* to downloading uvdesk from Community Applications. Please refer to [Setting up the Database](#setting-up-the-database) for instructions.
-* You will need a reverse proxy setup. 
-
-#### Reverse-Proxy
-
-Setting up a reverse proxy is a task all unto itself, and best left to better authors than I: 
-
-* IBRACORP NGINX Proxy Manager Guide: <https://youtu.be/h1a4u72o-64>
-* IBRACORP NGINX Proxy Manager **with Cloudflare** Guide: <https://www.youtube.com/watch?v=c6Y6M8CdcQ0>
-* Spaceinvaderone's Reverse Proxy Guide (SWAG): <https://youtu.be/I0lhZc25Sro>
-
-There are other guides, but these are all unRAID specific and should get you what you need to setup a reverse proxy. Note, the reverse proxy **must be setup prior to installing uvdesk**.
-
-
-
-#### Setting up the Database
-
-If you don't know how to setup a database in mySQL, it sounds scarier than it is. First, download a mariaDB or mySQL image from Community Applications. After you've done that, click on the container image and hit console: 
-
-![console link on container click](accessing-console.png "Console link")
-
-You should be presented with a terminal pop-up browser window. If not, make sure to allow popups from your server's domain name. 
-
-##### Logging In
-
-You'll first need to login to mysql as root, using the password you made when you generated the mySQL template, as so: 
+## How it works
 
 ```
-mysql -u root -p
-Enter password:
-```
-Once you paste/type in your password, you should see this: 
-
-```
-Welcome to the MySQL monitor.  Commands end with ; or \g.
-Your MySQL connection id is 9
-Server version: 8.0.32 MySQL Community Server - GPL
-
-Copyright (c) 2000, 2023, Oracle and/or its affiliates.
-
-Oracle is a registered trademark of Oracle Corporation and/or its
-affiliates. Other names may be trademarks of their respective
-owners.
-
-Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
-
-mysql>
+ (cron poll) → Resolve release → Quality gate → Fetch source → Build (amd64+arm64) → Publish → [notify on failure]
+                newest, non-draft   SonarQube      upstream       single atomic buildx   Docker Hub + GHCR
+                non-prerelease;      over THIS      tarball,       invocation; all-or-    identical tag sets;
+                skip if already      repo's code    unmodified     nothing across arches  latest only if newest
+                published on both    blocks publish
 ```
 
-##### Creating the User
+- **Detection** — Jenkins polls the upstream Releases API; only stable (non-draft, non-prerelease)
+  releases are eligible. Already-published versions (present on both registries) are skipped.
+- **Quality gate** — SonarQube analyzes this repo's own scripts/pipeline (never upstream source); a
+  failing gate blocks the build.
+- **Build** — a single `docker buildx` invocation builds both architectures from the upstream
+  Dockerfile. If either architecture fails, nothing is published (all-or-nothing).
+- **Publish** — identical tag sets go to Docker Hub and GHCR; `latest` advances only for the newest
+  eligible release.
 
-Now we can create the user (uvdesk by default):   
+## Published tags
 
-`CREATE USER 'uvdesk'@'localhost' IDENTIFIED BY 'SUPERSECUREPASSWORDHERE';`
+For an upstream version `X.Y.Z`, on both `docker.io/<ns>/uvdesk` and `ghcr.io/<owner>/uvdesk`:
 
-You should see this output:  
-`Query OK, 0 rows affected (0.01 sec)`
+| Tag | Type | Resolves to |
+|---|---|---|
+| `X.Y.Z` | multi-arch | native arch for the puller |
+| `latest` | multi-arch | newest eligible release, native arch |
+| `X.Y.Z-amd64`, `x64` | arch-pinned | amd64 |
+| `X.Y.Z-arm64`, `arm64` | arch-pinned | arm64 |
 
-##### Creating the Database
+## Running a published image
 
-Now we create the database (uvdesk by default):
-`CREATE DATABASE 'uvdesk'`;
+See [`docs/usage.md`](docs/usage.md) for the full end-user guide (environment variables, ports,
+persistence volumes) and the maintainer/Jenkins setup guide.
 
-Once again, you should see this output:
-`Query OK, 1 rows affected (0.01 sec)`
+Quick start:
 
-##### Granting User Privileges on Database
+```sh
+docker run -d --name uvdesk -p 8080:80 \
+  -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=uvdesk \
+  -e MYSQL_USER=uvdesk -e MYSQL_PASSWORD=uvdeskpw \
+  -v uvdesk_db:/var/lib/mysql -v uvdesk_app:/var/www/uvdesk \
+  <ns>/uvdesk:latest
+# then open http://localhost:8080/ and complete the UVdesk web installer
+```
 
-Lastly, we need to give our `uvdesk` user all privileges on the uvdesk database: 
+## Repository layout
 
-`GRANT ALL PRIVILEGES ON uvdesk.* TO 'uvdesk'@'localhost' IDENTIFIED BY 'SUPERSECUREPASSWORDHERE';`
+```
+Jenkinsfile                 # pipeline: poll → gate → fetch → build → publish → notify
+sonar-project.properties    # SonarQube scope (this repo's artifacts only)
+scripts/
+├── check-release.sh        # resolve newest eligible release + build/skip decision
+├── fetch-source.sh         # download + extract the upstream release tarball
+├── build-and-push.sh       # atomic multi-arch build + tag + push to both registries
+├── quality-gate.sh         # ShellCheck → SonarQube generic issues + scanner
+├── notify.sh               # maintainer failure notifications
+└── lib/
+    ├── common.sh                     # shared helpers + tag computation
+    └── assert-unmodified-upstream.sh # mechanical FR-018 / Principle I guard
+tests/                      # bats unit tests + smoke test
+docs/usage.md               # end-user + maintainer guide
+specs/                      # Spec Kit feature docs (spec, plan, tasks, contracts)
+```
 
-Once last time, you should see this output:  
+## Development
 
-`Query OK, 1 rows affected (0.01 sec)`
+```sh
+make lint    # ShellCheck over scripts/**
+make test    # bats unit tests
+make check   # lint + test
+```
 
-You've now done all the work you'll need to do in mySQL, you can exit the pop-up window or leave by typing `exit`. 
+## Design & governance
 
-#### Installing uvdesk from Community Applications
-
-To install uvdesk from Community Applications, simply navigate to Community Apps and head to either **Productivity** or **Tools**, or just search `uvdesk`, you should see it in the results like this: 
-
-![community-apps](community-apps.png)
-
-#### Accessing UVDesk &  First-Time Setup
-
-##### Configuring the Container
-When you get to the container configuration page in unRAID, make sure to fill in all of your details regarding your mySQL instance, as well as your intended domain name for your instance (eg. help.mydomain.com). You will also need to generate an app secret, any 32 character randomized string will do. Lastly, make sure to set the timezone and currency to your local ones. 
-
-##### Accessing the webUI
-After that, just hit apply and when you navigate to your domain name or http://SERVERIP:6744 you'll be presented with the Setup Wizard. You'll need to type the same mySQL info, and then create an admin user. After that, start exploring! 
-
-
-## Acknowledgements
-
-Thanks to @MountainGod on the IBRACORP Discord for some help with the environment flags. 
-Thanks just to the overall unRAID community, it's a blast to finally contribute something back!
+- Feature spec, plan, and tasks: [`specs/001-automated-docker-builds/`](specs/001-automated-docker-builds/)
+- Project constitution (the non-negotiable principles): [`.specify/memory/constitution.md`](.specify/memory/constitution.md)

@@ -1,0 +1,128 @@
+// Jenkinsfile - automated multi-arch UVdesk image builds.
+// Flow: Resolve release -> Quality gate -> Fetch source -> Build & Publish -> (notify on failure)
+// Governed by .specify/memory/constitution.md (Principles I-V).
+
+pipeline {
+  agent any
+
+  options {
+    // Principle IV: single-flight so overlapping poll cycles cannot corrupt tags.
+    disableConcurrentBuilds()
+    timestamps()
+    timeout(time: 90, unit: 'MINUTES')
+  }
+
+  // FR-009: poll the upstream releases on a schedule (default hourly).
+  triggers {
+    cron(env.POLL_SCHEDULE ?: 'H * * * *')
+  }
+
+  parameters {
+    string(name: 'VERSION', defaultValue: '',
+           description: 'Optional exact upstream version (e.g. 1.1.8). Empty = auto-select newest eligible.')
+    booleanParam(name: 'FORCE_REBUILD', defaultValue: false,
+           description: 'Rebuild & republish even if already published on both registries.')
+  }
+
+  environment {
+    // Image identity / registries (set these as Jenkins env or folder properties).
+    IMAGE_NAME          = "${env.IMAGE_NAME ?: 'uvdesk'}"
+    DOCKERHUB_NAMESPACE = "${env.DOCKERHUB_NAMESPACE ?: ''}"
+    GHCR_OWNER          = "${env.GHCR_OWNER ?: ''}"
+    WORK_DIR            = '.work'
+
+    // Credentials (create these IDs in Jenkins).
+    DOCKERHUB_CREDS = credentials('dockerhub-token')   // username + token
+    GHCR_CREDS      = credentials('ghcr-token')        // username + PAT
+    SONAR_TOKEN     = credentials('sonarqube-token')
+    GITHUB_TOKEN    = credentials('github-token')      // optional, raises API rate limit
+
+    SONAR_HOST_URL  = "${env.SONAR_HOST_URL ?: ''}"
+    NOTIFY_EMAIL    = "${env.NOTIFY_EMAIL ?: ''}"
+  }
+
+  stages {
+    stage('Prepare builder') {
+      steps {
+        sh '''
+          set -eu
+          docker run --privileged --rm tonistiigi/binfmt --install all >/dev/null 2>&1 || true
+          docker buildx inspect uvdesk-builder >/dev/null 2>&1 || docker buildx create --name uvdesk-builder --use
+          docker buildx use uvdesk-builder
+          docker buildx inspect --bootstrap >/dev/null
+        '''
+      }
+    }
+
+    stage('Registry login') {
+      steps {
+        sh '''
+          set -eu
+          echo "$DOCKERHUB_CREDS_PSW" | docker login docker.io -u "$DOCKERHUB_CREDS_USR" --password-stdin
+          echo "$GHCR_CREDS_PSW"      | docker login ghcr.io   -u "$GHCR_CREDS_USR"      --password-stdin
+        '''
+      }
+    }
+
+    stage('Resolve release') {
+      steps {
+        sh 'scripts/check-release.sh'
+        script {
+          def props = readProperties file: "${env.WORK_DIR}/decision.env"
+          env.ACTION     = props.ACTION
+          env.VERSION    = props.VERSION
+          env.IS_NEWEST  = props.IS_NEWEST
+          echo "Decision: action=${env.ACTION} version=${env.VERSION} is_newest=${env.IS_NEWEST}"
+        }
+      }
+    }
+
+    stage('Quality gate') {
+      when { expression { env.ACTION == 'build' } }
+      steps {
+        // FR-012: scan this repo's own artifacts; block publish on failure.
+        withSonarQubeEnv('SonarQube') {
+          sh 'scripts/quality-gate.sh'
+        }
+        timeout(time: 10, unit: 'MINUTES') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+
+    stage('Fetch source') {
+      when { expression { env.ACTION == 'build' } }
+      steps {
+        // IS_NEWEST already decided in Resolve; pass it through so fetch is consistent.
+        sh "IS_NEWEST=${env.IS_NEWEST} scripts/fetch-source.sh ${env.VERSION}"
+      }
+    }
+
+    stage('Build & Publish') {
+      when { expression { env.ACTION == 'build' } }
+      steps {
+        // build-and-push.sh runs the upstream-integrity guard, then the atomic
+        // multi-arch build + dual-registry publish + arch-pinned tags.
+        sh 'scripts/build-and-push.sh'
+      }
+    }
+
+    stage('Skipped (already published)') {
+      when { expression { env.ACTION == 'skip' } }
+      steps {
+        echo "Version ${env.VERSION} already published on all registries — nothing to do (FR-010)."
+      }
+    }
+  }
+
+  post {
+    failure {
+      sh """
+        scripts/notify.sh "${env.VERSION ?: 'unknown'}" "${env.STAGE_NAME ?: 'pipeline'}" "${env.BUILD_URL ?: 'n/a'}" "See Jenkins log"
+      """
+    }
+    always {
+      sh 'docker logout docker.io >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true'
+    }
+  }
+}

@@ -1,3 +1,14 @@
 .claude/
-.specify/
 .env
+.env*
+
+# Build/runtime working directories (upstream tarball extraction, scratch)
+.work/
+build/
+*.tar.gz
+
+# Tooling reports & logs
+*.log
+shellcheck-report.json
+.scannerwork/
+.sonar/

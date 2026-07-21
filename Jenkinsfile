@@ -16,8 +16,8 @@ pipeline {
   options {
     // Principle IV: single-flight so overlapping poll cycles cannot corrupt tags.
     disableConcurrentBuilds()
-    timestamps()
     timeout(time: 90, unit: 'MINUTES')
+    // (No timestamps() — the Timestamper plugin is not installed on this controller.)
   }
 
   // FR-009: poll the upstream releases on a schedule (default hourly).
@@ -73,10 +73,12 @@ pipeline {
       steps {
         sh 'scripts/check-release.sh'
         script {
-          def props = readProperties file: "${env.WORK_DIR}/decision.env"
-          env.ACTION     = props.ACTION
-          env.VERSION    = props.VERSION
-          env.IS_NEWEST  = props.IS_NEWEST
+          // Read decision.env values with sandbox-safe steps only: sh(returnStdout)
+          // + fixed env assignments (no readProperties/readFile, no dynamic env[...]
+          // which the Groovy sandbox rejects as putAt).
+          env.ACTION    = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$ACTION"').trim()
+          env.VERSION   = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$VERSION"').trim()
+          env.IS_NEWEST = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$IS_NEWEST"').trim()
           echo "Decision: action=${env.ACTION} version=${env.VERSION} is_newest=${env.IS_NEWEST}"
         }
       }

@@ -42,8 +42,9 @@ TARBALL_URL="$(gh_api "repos/${UPSTREAM_REPO}/releases/tags/${TAG}" \
   || die "could not query release ${TAG} (upstream source unreachable)"
 [ -n "$TARBALL_URL" ] || die "release ${TAG} has no tarball_url (malformed/unavailable release)"
 
-curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
-  -o "$TARBALL" "$TARBALL_URL" \
+dl_auth=()
+[ -n "${GITHUB_TOKEN:-}" ] && dl_auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+curl -fsSL "${dl_auth[@]}" -o "$TARBALL" "$TARBALL_URL" \
   || die "failed to download source archive for ${TAG}"
 
 # GitHub tarballs wrap contents in a single top-level dir; strip it.
@@ -58,7 +59,6 @@ CONTEXT_DIR="$(cd "$SRC_DIR" && pwd)"
 
 # --- Compute is_newest (self-contained fallback) ---
 if [ -n "${IS_NEWEST:-}" ]; then
-  IS_NEWEST="${IS_NEWEST}"
   log "is_newest overridden via env: ${IS_NEWEST}"
 elif newest="$(newest_eligible_version 2>/dev/null)" && [ -n "$newest" ]; then
   if [ "$VERSION" = "$newest" ]; then IS_NEWEST=true; else IS_NEWEST=false; fi

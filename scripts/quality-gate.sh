@@ -56,15 +56,29 @@ else
 fi
 
 # --- 2. sonar-scanner -------------------------------------------------------
-if ! command -v sonar-scanner >/dev/null 2>&1; then
-  die "sonar-scanner not installed on the agent"
-fi
-[ -n "${SONAR_HOST_URL:-}" ] || die "SONAR_HOST_URL not set"
-[ -n "${SONAR_TOKEN:-}" ]    || die "SONAR_TOKEN not set"
+# withSonarQubeEnv injects SONAR_HOST_URL and SONAR_AUTH_TOKEN; accept either
+# token name.
+SONAR_TOKEN="${SONAR_TOKEN:-${SONAR_AUTH_TOKEN:-}}"
+[ -n "${SONAR_HOST_URL:-}" ] || die "SONAR_HOST_URL not set (run inside withSonarQubeEnv, or export it)"
+[ -n "${SONAR_TOKEN}" ]      || die "SONAR token not set (SONAR_TOKEN / SONAR_AUTH_TOKEN)"
+
+SCANNER_IMAGE="${SONAR_SCANNER_IMAGE:-sonarsource/sonar-scanner-cli:latest}"
 
 log "invoking sonar-scanner against ${SONAR_HOST_URL}"
-sonar-scanner \
-  -Dsonar.host.url="${SONAR_HOST_URL}" \
-  -Dsonar.token="${SONAR_TOKEN}"
+if command -v sonar-scanner >/dev/null 2>&1; then
+  sonar-scanner \
+    -Dsonar.host.url="${SONAR_HOST_URL}" \
+    -Dsonar.token="${SONAR_TOKEN}"
+elif command -v docker >/dev/null 2>&1; then
+  # No native scanner: run it in a container (the unraid-docker agent has Docker).
+  log "sonar-scanner binary absent; using container ${SCANNER_IMAGE}"
+  docker run --rm \
+    -e SONAR_HOST_URL="${SONAR_HOST_URL}" \
+    -e SONAR_TOKEN="${SONAR_TOKEN}" \
+    -v "${REPO_ROOT}:/usr/src" \
+    "${SCANNER_IMAGE}"
+else
+  die "no sonar-scanner binary and no docker available to run ${SCANNER_IMAGE}"
+fi
 
 log "sonar-scanner completed; quality gate result is enforced by waitForQualityGate in the pipeline"

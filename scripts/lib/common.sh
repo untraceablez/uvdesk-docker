@@ -7,9 +7,9 @@
 #
 # This library only DEFINES functions/vars; callers set `set -euo pipefail`.
 
-# Guard against double-sourcing.
+# Guard against double-sourcing. (This library is always sourced, never executed.)
 if [ -n "${_UVDESK_COMMON_SH_LOADED:-}" ]; then
-  return 0 2>/dev/null || exit 0
+  return 0
 fi
 _UVDESK_COMMON_SH_LOADED=1
 

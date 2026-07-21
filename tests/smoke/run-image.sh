@@ -69,7 +69,8 @@ test_platform() {
   log "PASS ${platform}"
 }
 
-for p in $PLATFORMS; do
+read -ra _platforms <<< "$PLATFORMS"
+for p in "${_platforms[@]}"; do
   test_platform "$p"
 done
 

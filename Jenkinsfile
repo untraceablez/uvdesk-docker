@@ -1,9 +1,19 @@
 // Jenkinsfile - automated multi-arch UVdesk image builds.
 // Flow: Resolve release -> Quality gate -> Fetch source -> Build & Publish -> (notify on failure)
 // Governed by .specify/memory/constitution.md (Principles I-V).
+//
+// Runs on the `unraid-docker` permanent agent (label `docker`) because the build
+// needs a REAL Docker daemon: buildx multi-arch + QEMU emulation are not possible
+// on the daemonless kaniko k8s agents.
+//
+// NOTE on SonarQube: the cluster's `SonarQube` JCasC installation points at the
+// in-cluster URL (sonarqube-sonarqube.sonarqube:9000), which the off-cluster
+// unraid-docker VM cannot reach. Use a public-URL installation instead — set
+// SONARQUBE_INSTALLATION (defaults to `SonarQube-Public`, which must be added to
+// the JCasC sonarGlobalConfiguration pointing at https://sonarqube.taylorcohron.me).
 
 pipeline {
-  agent any
+  agent { label 'docker' }
 
   options {
     // Principle IV: single-flight so overlapping poll cycles cannot corrupt tags.
@@ -25,20 +35,23 @@ pipeline {
   }
 
   environment {
-    // Image identity / registries (set these as Jenkins env or folder properties).
+    // Image identity / registries (set as Jenkins global/folder env properties).
     IMAGE_NAME          = "${env.IMAGE_NAME ?: 'uvdesk'}"
     DOCKERHUB_NAMESPACE = "${env.DOCKERHUB_NAMESPACE ?: ''}"
-    GHCR_OWNER          = "${env.GHCR_OWNER ?: ''}"
+    GHCR_OWNER          = "${env.GHCR_OWNER ?: 'untraceablez'}"
     WORK_DIR            = '.work'
 
-    // Credentials (create these IDs in Jenkins).
-    DOCKERHUB_CREDS = credentials('dockerhub-token')   // username + token
-    GHCR_CREDS      = credentials('ghcr-token')        // username + PAT
-    SONAR_TOKEN     = credentials('sonarqube-token')
-    GITHUB_TOKEN    = credentials('github-token')      // optional, raises API rate limit
+    // usernamePassword credentials -> _USR / _PSW (add these IDs to JCasC).
+    DOCKERHUB_CREDS = credentials('dockerhub-token')
+    GHCR_CREDS      = credentials('ghcr-token')
 
-    SONAR_HOST_URL  = "${env.SONAR_HOST_URL ?: ''}"
-    NOTIFY_EMAIL    = "${env.NOTIFY_EMAIL ?: ''}"
+    // Which JCasC SonarQube installation to use (must be reachable from this agent).
+    SONARQUBE_INSTALLATION = "${env.SONARQUBE_INSTALLATION ?: 'SonarQube-Public'}"
+
+    NOTIFY_EMAIL = "${env.NOTIFY_EMAIL ?: 'taylorcohrontech@gmail.com'}"
+    // GITHUB_TOKEN is optional; if a 'github-token' secret-text credential exists,
+    // bind it in a script block per-stage. Unset is fine (unauthenticated release
+    // reads are well within the hourly-poll rate limit).
   }
 
   stages {
@@ -81,7 +94,9 @@ pipeline {
       when { expression { env.ACTION == 'build' } }
       steps {
         // FR-012: scan this repo's own artifacts; block publish on failure.
-        withSonarQubeEnv('SonarQube') {
+        // withSonarQubeEnv injects SONAR_HOST_URL + SONAR_AUTH_TOKEN for the chosen
+        // installation and wires the report-task correlation for waitForQualityGate.
+        withSonarQubeEnv("${env.SONARQUBE_INSTALLATION}") {
           sh 'scripts/quality-gate.sh'
         }
         timeout(time: 10, unit: 'MINUTES') {
@@ -93,7 +108,6 @@ pipeline {
     stage('Fetch source') {
       when { expression { env.ACTION == 'build' } }
       steps {
-        // IS_NEWEST already decided in Resolve; pass it through so fetch is consistent.
         sh "IS_NEWEST=${env.IS_NEWEST} scripts/fetch-source.sh ${env.VERSION}"
       }
     }
@@ -101,8 +115,8 @@ pipeline {
     stage('Build & Publish') {
       when { expression { env.ACTION == 'build' } }
       steps {
-        // build-and-push.sh runs the upstream-integrity guard, then the atomic
-        // multi-arch build + dual-registry publish + arch-pinned tags.
+        // Runs the upstream-integrity guard, then the atomic multi-arch build +
+        // dual-registry publish + arch-pinned tags.
         sh 'scripts/build-and-push.sh'
       }
     }
@@ -117,9 +131,9 @@ pipeline {
 
   post {
     failure {
-      sh """
-        scripts/notify.sh "${env.VERSION ?: 'unknown'}" "${env.STAGE_NAME ?: 'pipeline'}" "${env.BUILD_URL ?: 'n/a'}" "See Jenkins log"
-      """
+      sh '''
+        scripts/notify.sh "${VERSION:-unknown}" "${STAGE_NAME:-pipeline}" "${BUILD_URL:-n/a}" "See Jenkins log"
+      '''
     }
     always {
       sh 'docker logout docker.io >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true'

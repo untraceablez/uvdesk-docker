@@ -38,6 +38,14 @@ VERSION="$(strip_v "${VERSION:-}")"
 CONTEXT_DIR="${CONTEXT_DIR:-}"
 IS_NEWEST="${IS_NEWEST:-false}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
+# Build-environment base-image pin (Constitution Principle I clarification):
+# upstream's Dockerfile uses the floating `FROM ubuntu:latest`, which breaks
+# whenever ubuntu:latest advances ahead of the ondrej/php PPA (e.g. 26.04
+# "resolute" has no php8.1 PPA yet). We pin what `ubuntu:latest` RESOLVES to for
+# this build via a buildx --build-context override — WITHOUT editing upstream's
+# Dockerfile/source — reproducing the build against the Ubuntu upstream targeted.
+# Set UBUNTU_BASE_PIN='' to disable and use whatever ubuntu:latest currently is.
+UBUNTU_BASE_PIN="${UBUNTU_BASE_PIN:-ubuntu:24.04}"
 
 [ -n "$VERSION" ] || die "VERSION not set (run fetch-source.sh first or export it)"
 is_valid_semver "$VERSION" || die "invalid version: $VERSION"
@@ -71,6 +79,13 @@ while IFS= read -r tag; do
   done
 done < <(shared_tags "$VERSION" "$IS_NEWEST")
 
+# Build-env base pin, applied without touching upstream's Dockerfile.
+PIN_ARGS=()
+if [ -n "$UBUNTU_BASE_PIN" ]; then
+  PIN_ARGS=(--build-context "ubuntu:latest=docker-image://${UBUNTU_BASE_PIN}")
+  log "pinning upstream's FROM ubuntu:latest -> ${UBUNTU_BASE_PIN} for this build"
+fi
+
 log "building ${PLATFORMS} for version=${VERSION} is_newest=${IS_NEWEST}"
 log "target registries: ${REPOS[*]}"
 
@@ -80,6 +95,7 @@ log "target registries: ${REPOS[*]}"
 # is published on a partial failure (FR-013 / Principle II).
 docker buildx build \
   --platform "$PLATFORMS" \
+  "${PIN_ARGS[@]}" \
   "${LABELS[@]}" \
   "${SHARED_REFS[@]}" \
   --provenance=false \

@@ -1,5 +1,14 @@
 <!--
-Sync Impact Report — 2026-07-20
+Sync Impact Report — 2026-07-20 (v1.1.0)
+Version change: 1.0.0 → 1.1.0
+Bump rationale (MINOR): expanded guidance on Principle I — build-environment base-image
+pins (buildx --build-context override of upstream's floating FROM ubuntu:latest) are
+explicitly permitted as reproducibility, not modification. Prompted by upstream v1.1.8
+failing to build once ubuntu:latest rolled to 26.04 "resolute" (no ondrej/php PPA yet).
+Templates/artifacts: build-and-push.sh implements the pin (UBUNTU_BASE_PIN, default
+ubuntu:24.04); research.md D1 updated. No principle removed or redefined.
+
+--- Prior: Sync Impact Report — 2026-07-20
 Version change: (unratified template) → 1.0.0
 Bump rationale: Initial ratification of the project constitution (first concrete adoption).
 
@@ -44,9 +53,19 @@ the pipeline if a repo-authored Dockerfile/override or any post-extract patch of
 detected. When an upstream release is defective, the only permitted responses are to skip it and/or
 report it — never to patch upstream here.
 
+**Build-environment pins are permitted (clarification, v1.1.0)**: Pinning the *build environment* —
+notably resolving upstream's floating `FROM ubuntu:latest` to a specific Ubuntu version via a buildx
+`--build-context` override — is NOT a modification of upstream source and IS permitted. It edits no
+upstream file, adds no Dockerfile, and changes no application code; it reproduces the build against the
+OS the upstream release actually targeted. This is the sanctioned response to upstream's non-pinned
+base breaking when `ubuntu:latest` advances ahead of a required PPA. The mechanical integrity guard
+(no repo Dockerfile/override, unmodified extracted context) still applies unchanged.
+
 **Rationale**: This repo's value is trustworthy, drift-free repackaging. Forking or patching upstream
 would silently diverge behavior, break the "same as upstream" contract users rely on, and create an
 unbounded maintenance burden. Enforcing this mechanically (not by convention) is what makes it real.
+A build-environment pin serves the same goal — it makes the unmodified upstream build *reproducible*
+rather than changing it.
 
 ### II. Atomic, All-or-Nothing Publishing
 
@@ -139,4 +158,4 @@ This constitution supersedes other practices for this repository. It is authorit
   changes themselves occur only through an explicit amendment to this file, never by reinterpretation
   during analysis.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-20 | **Last Amended**: 2026-07-20
+**Version**: 1.1.0 | **Ratified**: 2026-07-20 | **Last Amended**: 2026-07-20

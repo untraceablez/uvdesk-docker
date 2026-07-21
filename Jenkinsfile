@@ -2,15 +2,13 @@
 // Flow: Resolve release -> Quality gate -> Fetch source -> Build & Publish -> (notify on failure)
 // Governed by .specify/memory/constitution.md (Principles I-V).
 //
-// Runs on the `unraid-docker` permanent agent (label `docker`) because the build
-// needs a REAL Docker daemon: buildx multi-arch + QEMU emulation are not possible
-// on the daemonless kaniko k8s agents.
-//
-// NOTE on SonarQube: the cluster's `SonarQube` JCasC installation points at the
-// in-cluster URL (sonarqube-sonarqube.sonarqube:9000), which the off-cluster
-// unraid-docker VM cannot reach. Use a public-URL installation instead — set
-// SONARQUBE_INSTALLATION (defaults to `SonarQube-Public`, which must be added to
-// the JCasC sonarGlobalConfiguration pointing at https://sonarqube.taylorcohron.me).
+// Split agents:
+//   * Most stages run on the `unraid-docker` permanent node (label `docker`) — a
+//     REAL Docker daemon is required for buildx multi-arch + QEMU + docker run,
+//     which the daemonless kaniko agents cannot do.
+//   * The Quality gate runs IN-CLUSTER on the `sonar` pod (sonar-scanner-cli),
+//     reaching SonarQube over the internal service URL — the off-cluster VM
+//     cannot pass the Cloudflare Access edge in front of the public URL.
 
 pipeline {
   agent { label 'docker' }
@@ -41,17 +39,11 @@ pipeline {
     GHCR_OWNER          = "${env.GHCR_OWNER ?: 'untraceablez'}"
     WORK_DIR            = '.work'
 
-    // usernamePassword credentials -> _USR / _PSW (add these IDs to JCasC).
+    // usernamePassword credentials -> _USR / _PSW (defined in JCasC).
     DOCKERHUB_CREDS = credentials('dockerhub-token')
     GHCR_CREDS      = credentials('ghcr-token')
 
-    // Which JCasC SonarQube installation to use (must be reachable from this agent).
-    SONARQUBE_INSTALLATION = "${env.SONARQUBE_INSTALLATION ?: 'SonarQube-Public'}"
-
     NOTIFY_EMAIL = "${env.NOTIFY_EMAIL ?: 'taylorcohrontech@gmail.com'}"
-    // GITHUB_TOKEN is optional; if a 'github-token' secret-text credential exists,
-    // bind it in a script block per-stage. Unset is fine (unauthenticated release
-    // reads are well within the hourly-poll rate limit).
   }
 
   stages {
@@ -92,12 +84,14 @@ pipeline {
 
     stage('Quality gate') {
       when { expression { env.ACTION == 'build' } }
+      // Run in-cluster: the sonar-scanner-cli pod reaches SonarQube on the internal
+      // service URL (withSonarQubeEnv('SonarQube')), sidestepping Cloudflare Access.
+      agent { label 'sonar' }
       steps {
-        // FR-012: scan this repo's own artifacts; block publish on failure.
-        // withSonarQubeEnv injects SONAR_HOST_URL + SONAR_AUTH_TOKEN for the chosen
-        // installation and wires the report-task correlation for waitForQualityGate.
-        withSonarQubeEnv("${env.SONARQUBE_INSTALLATION}") {
-          sh 'scripts/quality-gate.sh'
+        container('sonar-scanner') {
+          withSonarQubeEnv('SonarQube') {
+            sh 'scripts/quality-gate.sh'
+          }
         }
         timeout(time: 10, unit: 'MINUTES') {
           waitForQualityGate abortPipeline: true
@@ -131,6 +125,7 @@ pipeline {
 
   post {
     failure {
+      // Runs on the pipeline's default `docker` agent (workspace + scripts present).
       sh '''
         scripts/notify.sh "${VERSION:-unknown}" "${STAGE_NAME:-pipeline}" "${BUILD_URL:-n/a}" "See Jenkins log"
       '''

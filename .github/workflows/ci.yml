@@ -1,0 +1,37 @@
+name: CI
+
+# Lint the automation scripts and run the bats unit tests on every PR to main
+# (and on pushes to main). Mirrors `make check` from the repo.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: make check (shellcheck + bats)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck and bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats jq
+
+      - name: Show tool versions
+        run: |
+          shellcheck --version
+          bats --version
+          jq --version
+
+      - name: Lint (ShellCheck)
+        run: make lint
+
+      - name: Test (bats)
+        run: make test

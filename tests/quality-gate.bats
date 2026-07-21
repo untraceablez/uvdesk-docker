@@ -18,12 +18,12 @@ teardown() {
 
 @test "quality-gate.sh fails closed when SonarQube is unconfigured" {
   # Unset Sonar config -> the gate must NOT pass (exit non-zero).
-  run env -u SONAR_HOST_URL -u SONAR_TOKEN scripts/quality-gate.sh
+  run env -u SONAR_HOST_URL -u SONAR_TOKEN -u SONAR_AUTH_TOKEN scripts/quality-gate.sh
   [ "$status" -ne 0 ]
 }
 
 @test "quality-gate.sh produces a valid ShellCheck external-issues report" {
-  run env -u SONAR_HOST_URL -u SONAR_TOKEN scripts/quality-gate.sh
+  run env -u SONAR_HOST_URL -u SONAR_TOKEN -u SONAR_AUTH_TOKEN scripts/quality-gate.sh
   [ -f "$REPO_ROOT/shellcheck-report.json" ]
   # Report must be valid JSON with the SonarQube generic-issue shape.
   run jq -e '.issues and .rules' "$REPO_ROOT/shellcheck-report.json"

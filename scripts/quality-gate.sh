@@ -19,8 +19,10 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT="${REPO_ROOT:-$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)}"
+# Neutralize CDPATH so `cd` never echoes a resolved path into the substitution.
+CDPATH=''
+SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 REPORT="${REPO_ROOT}/shellcheck-report.json"
 
 log() { printf '[quality-gate] %s\n' "$*" >&2; }

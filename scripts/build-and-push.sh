@@ -102,8 +102,9 @@ for repo in "${REPOS[@]}"; do
       | jq -r --arg os "$os" --arg cpu "$cpu" \
         '.manifests[] | select(.platform.os==$os and .platform.architecture==$cpu) | .digest' \
       | head -n1)"
-    [ -n "$digest" ] && [ "$digest" != "null" ] \
-      || die "could not find ${plat} digest in ${repo}:${VERSION} manifest"
+    if [ -z "$digest" ] || [ "$digest" = "null" ]; then
+      die "could not find ${plat} digest in ${repo}:${VERSION} manifest"
+    fi
     arch="$(arch_for "$plat")"; friendly="$(friendly_for "$plat")"
     log "creating arch-pinned tags ${repo}:${VERSION}-${arch} and ${repo}:${friendly}"
     docker buildx imagetools create \

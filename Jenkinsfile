@@ -73,12 +73,12 @@ pipeline {
       steps {
         sh 'scripts/check-release.sh'
         script {
-          // Parse .work/decision.env with core steps only (no Pipeline Utility Steps
-          // plugin on this controller, so no readProperties).
-          readFile("${env.WORK_DIR}/decision.env").trim().split('\n').each { line ->
-            def kv = line.split('=', 2)
-            if (kv.length == 2) { env[kv[0].trim()] = kv[1].trim() }
-          }
+          // Read decision.env values with sandbox-safe steps only: sh(returnStdout)
+          // + fixed env assignments (no readProperties/readFile, no dynamic env[...]
+          // which the Groovy sandbox rejects as putAt).
+          env.ACTION    = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$ACTION"').trim()
+          env.VERSION   = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$VERSION"').trim()
+          env.IS_NEWEST = sh(returnStdout: true, script: '. .work/decision.env; printf %s "$IS_NEWEST"').trim()
           echo "Decision: action=${env.ACTION} version=${env.VERSION} is_newest=${env.IS_NEWEST}"
         }
       }
